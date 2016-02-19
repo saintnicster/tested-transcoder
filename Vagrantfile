@@ -26,7 +26,7 @@ Vagrant.configure(2) do |config|
     apt-get update
     apt-get install -y make git mkvtoolnix handbrake-cli mplayer ffmpeg mp4v2-utils linux-headers-generic build-essential dkms virtualbox-guest-utils virtualbox-guest-dkms supervisor
 
-    git clone https://github.com/donmelton/video-transcoding-scripts
+    git clone https://github.com/saintnicster/video-transcoding-scripts.git
     mv video-transcoding-scripts/*.sh /usr/local/bin/
     rm -rf video-transcoding-scripts
 
