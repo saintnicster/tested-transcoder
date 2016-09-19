@@ -36,6 +36,7 @@ class Transcoder(object):
     COMPLETED_DIRECTORY = TRANSCODER_ROOT + '/completed-originals'
     # directory contained the compressed outputs
     OUTPUT_DIRECTORY = TRANSCODER_ROOT + '/output'
+    OUTPUT_LOGS_DIRECTORY = OUTPUT_DIRECTORY + '/logs'
     # standard options for the transcode-video script
     TRANSCODE_OPTIONS = '--mkv --slow --allow-dts --allow-ac3 --find-forced add --copy-all-ac3 --add-all-subtitles'
     # number of seconds a file must remain unmodified in the INPUT_DIRECTORY
@@ -70,6 +71,34 @@ class Transcoder(object):
         args = shlex.split(command)
         out = subprocess.check_output(args=args, stderr=subprocess.STDOUT)
         return out
+        
+    def makeDir( self, path ):
+        if not os.path.exists(path):
+                    try:
+                        os.makedirs(path)
+                        self.logger.info("Folder created - %s", path)
+                    except OSError as ex:
+                        msg = 'Cannot create directory "%s": %s' % (
+                            path, ex.strerror)
+                        self.logger.error(msg)
+                        return False
+        return True
+
+    def rmDir( self, folder_path ):
+        if (folder_path == self.INPUT_DIRECTORY):
+            return False
+        if os.path.exists(folder_path) :
+            try:
+                os.rmdir(folder_path)
+                self.logger.info("Folder deleted - %s", folder_path)
+            except OSError as ex:
+                if (ex.errno != 39):
+                    msg = 'Cannot delete directory "%s": %s' % (
+                        folder_path, ex.strerror)
+                    self.logger.error(msg)
+                    self.logger.error(ex)
+                return False
+        return True
 
     def mount_share(self):
         """
@@ -103,25 +132,18 @@ class Transcoder(object):
         self.logger.info('Transcoder started and scanning for input')
 
     def check_filesystem(self):
+        if not self.logger:
+            self.setup_logging()
+            
         "Checks that the filesystem and logger is setup properly"
         dirs = (self.INPUT_DIRECTORY, self.WORK_DIRECTORY,
-                self.OUTPUT_DIRECTORY, self.COMPLETED_DIRECTORY)
+                self.OUTPUT_DIRECTORY, self.COMPLETED_DIRECTORY, self.OUTPUT_LOGS_DIRECTORY)
         if not all(map(os.path.exists, dirs)):
             if not self.mount_share():
                 return False
             for path in dirs:
-                if not os.path.exists(path):
-                    try:
-                        os.mkdir(path)
-                    except OSError as ex:
-                        msg = 'Cannot create directory "%s": %s' % (
-                            path, ex.strerror)
-                        sys.stdout.write(msg)
-                        sys.stdout.flush()
-                        return False
+                self.makeDir(path)
 
-        if not self.logger:
-            self.setup_logging()
         return True
 
     def stop(self):
@@ -150,58 +172,76 @@ class Transcoder(object):
 
     def check_for_input(self):
         "Look in INPUT_DIRECTORY for an input file and process it"
-        for filename in os.listdir(self.INPUT_DIRECTORY):
-            if filename.startswith('.'):
-                continue
-            path = os.path.join(self.INPUT_DIRECTORY, filename)
-            if (time.time() - os.stat(path).st_mtime) > self.WRITE_THRESHOLD:
-                # when copying a file from windows to the VM, the filesize and
-                # last modified times don't change as data is written.
-                # fortunately these files seem to be locked such that
-                # attempting to open the file for reading raises an IOError.
-                # it seems reasonable to skip any file we can't open
-                try:
-                    f = open(path, 'r')
-                    f.close()
-                except IOError:
+        #for filename in os.listdir(self.INPUT_DIRECTORY):
+        for root, subdirs, files in os.walk(self.INPUT_DIRECTORY, False):            
+            if ('staging' in subdirs):
+                subdirs.remove('ignore')
+            
+            for filename in files:
+                if filename.startswith('.'):
                     continue
 
-                self.process_input(path)
-                # move the source to the COMPLETED_DIRECTORY
-                dst = os.path.join(self.COMPLETED_DIRECTORY,
-                                   os.path.basename(path))
-                shutil.move(path, dst)
-                break
+                path = os.path.join(root, filename)
+                dir_struct = os.path.dirname(path)[len(self.INPUT_DIRECTORY)+1 : ]
+                
+                if (time.time() - os.stat(path).st_mtime) > self.WRITE_THRESHOLD:
+                    # when copying a file from windows to the VM, the filesize and
+                    # last modified times don't change as data is written.
+                    # fortunately these files seem to be locked such that
+                    # attempting to open the file for reading raises an IOError.
+                    # it seems reasonable to skip any file we can't open
+                    try:
+                        f = open(path, 'r')
+                        f.close()
+                    except IOError:
+                        continue
 
-    def process_input(self, path):
-        name = os.path.basename(path)
+                    self.process_input(path , dir_struct)
+                    # move the source to the COMPLETED_DIRECTORY
+                    dst = os.path.join(self.COMPLETED_DIRECTORY, 
+                                        dir_struct, os.path.basename(path) )
+                    self.makeDir( os.path.dirname(dst) )
+                    shutil.move(path, dst)
+                    self.rmDir( os.path.dirname(path) )
+                    break
+                break
+            break
+
+    def process_input(self, input_path, subfolders):
+        name = os.path.basename(input_path)
         self.logger.info('Found new input "%s"', name)
 
         # if any of the following functions return no output, something
         # bad happened and we can't continue
 
         # parse the input meta info.
-        meta = self.scan_media(path)
+        meta = self.scan_media(input_path)
         if not meta:
             return
 
         # determine crop dimensions
-        crop = self.detect_crop(path)
+        crop = self.detect_crop(input_path)
         if not crop:
             return
 
         # transcode the video
-        work_path = self.transcode(path, crop, meta)
+        work_path = self.transcode(input_path, crop, meta)
         if not work_path:
             return
 
         # move the completed output to the output directory
-        self.logger.info('Moving completed work output %s to output directory',
-                         os.path.basename(work_path))
-        output_path = os.path.join(self.OUTPUT_DIRECTORY,
-                                   os.path.basename(work_path))
+        name = os.path.basename(work_path)
+        self.logger.info('Moving completed work output "%s" to output directory',
+                         name)
+                         
+        output_path = os.path.join(self.OUTPUT_DIRECTORY, subfolders, name)
+        #output_path = os.path.join(os.path.dirname(output_folder), os.path.basename(work_path))
+        self.makeDir( os.path.dirname(output_path) )
         shutil.move(work_path, output_path)
-        shutil.move(work_path + '.log', output_path + '.log')
+        shutil.move(work_path + '.log', 
+                    (os.path.join( self.OUTPUT_LOGS_DIRECTORY, 
+                                   str.replace(subfolders+'_'+name, os.path.sep, '_' ))
+                                  ) + '.log')
 
     def scan_media(self, path):
         "Use handbrake to scan the media for metadata"
