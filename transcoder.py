@@ -177,6 +177,9 @@ class Transcoder(object):
         "Look in INPUT_DIRECTORY for an input file and process it"
         #for filename in os.listdir(self.INPUT_DIRECTORY):
         for root, subdirs, files in os.walk(self.INPUT_DIRECTORY, False):
+            if root.startswith(self.INPUT_STAGING_DIRECTORY):
+                continue
+                
             if ('staging' in subdirs):
                 subdirs.remove('staging')
 
@@ -184,7 +187,7 @@ class Transcoder(object):
                 self.rmDir(root)
 
             for filename in files:
-                if filename == '.DS_Store':
+                if filename == '.DS_Store' or filename == 'desktop.ini':
                     os.remove(os.path.join(root, filename))
                     self.rmDir( os.path.dirname(root) )
                     continue
@@ -213,8 +216,7 @@ class Transcoder(object):
                     self.makeDir( os.path.dirname(dst) )
                     shutil.move(path, dst)
                     self.rmDir( os.path.dirname(path) )
-                    break
-                break
+                    return
 
     def process_input(self, input_path, subfolders):
         name = os.path.basename(input_path)
