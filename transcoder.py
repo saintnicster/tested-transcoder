@@ -29,6 +29,7 @@ class Transcoder(object):
     TRANSCODER_ROOT = "/media/transcoder"
     # directory containing new video to transcode
     INPUT_DIRECTORY = TRANSCODER_ROOT + '/input'
+    INPUT_STAGING_DIRECTORY = INPUT_DIRECTORY + '/staging'
     # directory where handbrake will save the output to. this is a temporary
     # location and the file is moved to OUTPUT_DIRECTORY after complete
     WORK_DIRECTORY = TRANSCODER_ROOT + '/work'
@@ -71,7 +72,7 @@ class Transcoder(object):
         args = shlex.split(command)
         out = subprocess.check_output(args=args, stderr=subprocess.STDOUT)
         return out
-        
+
     def makeDir( self, path ):
         if not os.path.exists(path):
                     try:
@@ -85,7 +86,9 @@ class Transcoder(object):
         return True
 
     def rmDir( self, folder_path ):
-        if (folder_path == self.INPUT_DIRECTORY):
+        dirs = (self.INPUT_DIRECTORY, self.INPUT_STAGING_DIRECTORY, self.WORK_DIRECTORY,
+                self.OUTPUT_DIRECTORY, self.COMPLETED_DIRECTORY, self.OUTPUT_LOGS_DIRECTORY)
+        if (folder_path in dirs):
             return False
         if os.path.exists(folder_path) :
             try:
@@ -134,9 +137,9 @@ class Transcoder(object):
     def check_filesystem(self):
         if not self.logger:
             self.setup_logging()
-            
+
         "Checks that the filesystem and logger is setup properly"
-        dirs = (self.INPUT_DIRECTORY, self.WORK_DIRECTORY,
+        dirs = (self.INPUT_DIRECTORY, self.INPUT_STAGING_DIRECTORY, self.WORK_DIRECTORY,
                 self.OUTPUT_DIRECTORY, self.COMPLETED_DIRECTORY, self.OUTPUT_LOGS_DIRECTORY)
         if not all(map(os.path.exists, dirs)):
             if not self.mount_share():
@@ -173,17 +176,24 @@ class Transcoder(object):
     def check_for_input(self):
         "Look in INPUT_DIRECTORY for an input file and process it"
         #for filename in os.listdir(self.INPUT_DIRECTORY):
-        for root, subdirs, files in os.walk(self.INPUT_DIRECTORY, False):            
+        for root, subdirs, files in os.walk(self.INPUT_DIRECTORY, False):
             if ('staging' in subdirs):
-                subdirs.remove('ignore')
-            
+                subdirs.remove('staging')
+
+            if not files:
+                self.rmDir(root)
+
             for filename in files:
+                if filename == '.DS_Store':
+                    os.remove(os.path.join(root, filename))
+                    self.rmDir( os.path.dirname(root) )
+                    continue
                 if filename.startswith('.'):
                     continue
 
                 path = os.path.join(root, filename)
                 dir_struct = os.path.dirname(path)[len(self.INPUT_DIRECTORY)+1 : ]
-                
+
                 if (time.time() - os.stat(path).st_mtime) > self.WRITE_THRESHOLD:
                     # when copying a file from windows to the VM, the filesize and
                     # last modified times don't change as data is written.
@@ -198,14 +208,13 @@ class Transcoder(object):
 
                     self.process_input(path , dir_struct)
                     # move the source to the COMPLETED_DIRECTORY
-                    dst = os.path.join(self.COMPLETED_DIRECTORY, 
+                    dst = os.path.join(self.COMPLETED_DIRECTORY,
                                         dir_struct, os.path.basename(path) )
                     self.makeDir( os.path.dirname(dst) )
                     shutil.move(path, dst)
                     self.rmDir( os.path.dirname(path) )
                     break
                 break
-            break
 
     def process_input(self, input_path, subfolders):
         name = os.path.basename(input_path)
@@ -233,13 +242,13 @@ class Transcoder(object):
         name = os.path.basename(work_path)
         self.logger.info('Moving completed work output "%s" to output directory',
                          name)
-                         
+
         output_path = os.path.join(self.OUTPUT_DIRECTORY, subfolders, name)
         #output_path = os.path.join(os.path.dirname(output_folder), os.path.basename(work_path))
         self.makeDir( os.path.dirname(output_path) )
         shutil.move(work_path, output_path)
-        shutil.move(work_path + '.log', 
-                    (os.path.join( self.OUTPUT_LOGS_DIRECTORY, 
+        shutil.move(work_path + '.log',
+                    (os.path.join( self.OUTPUT_LOGS_DIRECTORY,
                                    str.replace(subfolders+'_'+name, os.path.sep, '_' ))
                                   ) + '.log')
 
