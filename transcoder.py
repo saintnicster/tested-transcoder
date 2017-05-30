@@ -231,7 +231,8 @@ class Transcoder(object):
             return
 
         # determine crop dimensions
-        crop = self.detect_crop(input_path)
+        crop = 'Not Used'
+        #crop = self.detect_crop(input_path)
         if not crop:
             return
 
@@ -317,7 +318,7 @@ class Transcoder(object):
 
         command_parts = [
             'transcode-video.sh',
-            '--crop %s' % crop,
+#            '--crop %s' % crop,
             self.parse_audio_tracks(meta),
             self.TRANSCODE_OPTIONS,
             '--output "%s"' % output,
